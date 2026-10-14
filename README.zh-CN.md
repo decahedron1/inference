@@ -570,6 +570,9 @@ cargo build --release --features coreml
 cargo build --release --features openvino
 ultralytics-inference predict --source bus.jpg --device intel:gpu
 
+# 原生 OpenVINO IR（.xml）模型，由 OpenVINO 运行时直接运行，不经过 ONNX Runtime
+cargo build --release --features openvino-native
+
 # 多个 features
 cargo build --release --features "cuda,tensorrt"
 ```
@@ -590,6 +593,13 @@ ort = { version = "=2.0.0-rc.14", features = ["lax-feature-matching"] }
 
 > `openvino` 使用包含 OpenVINO provider 的预编译 ONNX Runtime（Linux x64 和 Windows x64）。该 provider 需要机器上已安装 OpenVINO 运行时，缺失时 `--device intel:*` 会停止并给出安装提示。
 
+**OpenVINO IR 模型：** 启用 `openvino-native` feature（可与 `openvino` 同时启用）后，`--model` 也可以直接使用 `yolo export format=openvino` 导出的 `.xml` 文件或导出文件夹，并通过 OpenVINO 运行时推理，而不经过 ONNX Runtime。所有任务（detect、segment、semantic、depth、classify、pose、obb）都可在 `intel:cpu`、`intel:gpu` 和 `intel:npu` 上运行，在 Rust 中用 `YOLOModel::load("yolo26n_openvino_model")` 加载。构建时不需要安装 OpenVINO，运行时会在首次打开模型时加载。设置和细节见 [`docs/OPENVINO.md`](docs/OPENVINO.md)。
+
+```bash
+yolo export model=yolo26n.pt format=openvino # FP32，可加 half=True、int8=True、dynamic=True 或 batch=4
+ultralytics-inference predict --model yolo26n_openvino_model --source bus.jpg --device intel:gpu
+```
+
 **可用 Features：**
 
 默认 features（除非传入 `--no-default-features`）：`annotate`、`visualize`。
@@ -604,6 +614,7 @@ ort = { version = "=2.0.0-rc.14", features = ["lax-feature-matching"] }
 | `cuda-preprocess` | GPU 预处理 + TensorRT 零拷贝输入（需要 CUDA toolkit；见 [`docs/CUDA.md`](docs/CUDA.md)） |
 | `coreml`          | Apple CoreML（macOS/iOS）                                                                |
 | `openvino`        | Intel OpenVINO（Linux 和 Windows x64）                                                   |
+| `openvino-native` | 加载原生 OpenVINO IR（`.xml`）模型，见 [`docs/OPENVINO.md`](docs/OPENVINO.md)            |
 | `onednn`          | Intel oneDNN                                                                             |
 | `rocm`            | AMD ROCm（需自行构建 ONNX Runtime，官方未发布）                                          |
 | `migraphx`        | AMD MIGraphX（Linux x64，`--device migraphx:0`）                                         |

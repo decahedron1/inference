@@ -1305,10 +1305,10 @@ fn postprocess_obb(
 // Coordinates are in the letterboxed model-input space, so we still scale/pad-correct
 // them back to original-image space. No NMS, no class-score matrix.
 
-/// Walk a sorted end-to-end output and, for each row above the confidence threshold that
+/// Walk an end-to-end output and, for each row above the confidence threshold that
 /// passes the class filter, scale/clip its box and invoke `on_kept(base, [x1,y1,x2,y2],
-/// conf, cls)`. Rows are confidence-descending, so it stops at the first sub-threshold row
-/// and after `cap` kept detections — the shared box-decode of the detect/segment/pose paths.
+/// conf, cls)`. Skip NaN and sub-threshold scores, stopping after `cap` kept detections.
+/// Shared by the detect, segment, pose and OBB paths.
 ///
 /// `normalized_to` names the inference `(height, width)` for heads whose first four columns
 /// are `[cx, cy, w, h]` normalized to the input, as RT-DETR's are; `None` reads them as the
@@ -1324,20 +1324,12 @@ fn decode_end2end(
     normalized_to: Option<(u32, u32)>,
     mut on_kept: impl FnMut(usize, [f32; 4], f32, usize),
 ) {
-    // Stopping at the first sub-threshold row is only sound because every head feeding this
-    // walk emits confidence-descending rows: the YOLO end-to-end and RT-DETR graphs both end
-    // in `TopK(sorted=1)`. Assert it in debug so a head that ever stops sorting trips here
-    // instead of silently dropping the detections behind the first low-scoring row.
-    debug_assert!(
-        (1..num_preds).all(|i| output[i * feats + 4] <= output[(i - 1) * feats + 4]),
-        "decode_end2end expects confidence-descending rows"
-    );
     let mut kept = 0;
     for i in 0..num_preds {
         let base = i * feats;
         let conf = output[base + 4];
-        if conf < config.confidence_threshold {
-            break;
+        if conf.is_nan() || conf < config.confidence_threshold {
+            continue;
         }
         let cls = output[base + 5] as usize;
         if !config.keep_class(cls) {
@@ -1796,14 +1788,21 @@ fn postprocess_depth(output: &[f32], shape: &[usize], mut results: Results) -> R
     };
     let x_lut: Vec<_> = (0..ow).map(|dx| axis(dx, ow, lw)).collect();
 
+    // Resample every source row to the output width once, then blend neighboring rows: the
+    // scattered reads happen once per source row instead of twice per output pixel.
+    let mut wide = vec![0f32; lh * ow];
+    wide.par_chunks_mut(ow).enumerate().for_each(|(y, dst)| {
+        let src = &output[y * lw..][..lw];
+        for (cell, &(x0, x1, fx)) in dst.iter_mut().zip(&x_lut) {
+            *cell = src[x0].mul_add(1.0 - fx, src[x1] * fx);
+        }
+    });
     let mut buf = vec![0f32; oh * ow];
     buf.par_chunks_mut(ow).enumerate().for_each(|(dy, row)| {
         let (y0, y1, fy) = axis(dy, oh, lh);
-        let (row0, row1) = (y0 * lw, y1 * lw);
-        for (cell, &(x0, x1, fx)) in row.iter_mut().zip(&x_lut) {
-            let top_row = output[row0 + x0].mul_add(1.0 - fx, output[row0 + x1] * fx);
-            let bot_row = output[row1 + x0].mul_add(1.0 - fx, output[row1 + x1] * fx);
-            *cell = top_row.mul_add(1.0 - fy, bot_row * fy);
+        let (top, bottom) = (&wide[y0 * ow..][..ow], &wide[y1 * ow..][..ow]);
+        for ((cell, &t), &b) in row.iter_mut().zip(top).zip(bottom) {
+            *cell = t.mul_add(1.0 - fy, b * fy);
         }
     });
     let map = Array2::from_shape_vec((oh, ow), buf).expect("shape matches");
@@ -2793,7 +2792,7 @@ mod tests {
         // Row0 above threshold, row1 below -> only one detection kept.
         let output = [
             10.0, 10.0, 50.0, 50.0, 0.9, 0.0, // keep
-            10.0, 10.0, 20.0, 20.0, 0.1, 0.0, // drop (sorted-desc break)
+            10.0, 10.0, 20.0, 20.0, 0.1, 0.0, // drop
         ];
         let r = postprocess_detect_end2end(
             &output,
@@ -2804,6 +2803,27 @@ mod tests {
             None,
         );
         assert_eq!(r.boxes.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_postprocess_detect_end2end_ignores_nan_scores() {
+        let output: Vec<_> = [f32::NAN, 0.9, 0.1, f32::NAN, 0.5]
+            .into_iter()
+            .flat_map(|conf| [10.0, 10.0, 50.0, 50.0, conf, 0.0])
+            .collect();
+        let config = InferenceConfig {
+            confidence_threshold: 0.25,
+            ..InferenceConfig::default()
+        };
+        let r = postprocess_detect_end2end(
+            &output,
+            &[1, 5, 6],
+            &unit_preprocess((100, 100)),
+            &config,
+            results_for(1, (100, 100), (640, 640)),
+            None,
+        );
+        assert_eq!(r.boxes.unwrap().len(), 2);
     }
 
     #[test]

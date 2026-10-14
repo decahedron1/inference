@@ -574,6 +574,9 @@ cargo build --release --features coreml
 cargo build --release --features openvino
 ultralytics-inference predict --source bus.jpg --device intel:gpu
 
+# Native OpenVINO IR (.xml) models, run by the OpenVINO runtime without ONNX Runtime
+cargo build --release --features openvino-native
+
 # Multiple features
 cargo build --release --features "cuda,tensorrt"
 ```
@@ -594,6 +597,13 @@ Providers missing from the chosen build are then absent at runtime and inference
 
 > `openvino` uses a prebuilt ONNX Runtime with the OpenVINO provider (Linux x64 and Windows x64). The provider needs the OpenVINO runtime installed on the machine, and a `--device intel:*` run stops with an install hint when it is missing.
 
+**OpenVINO IR models:** with the `openvino-native` feature (it can be combined with `openvino`), `--model` also takes a native OpenVINO export, the `.xml` file or the folder from `yolo export format=openvino`, and runs it through the OpenVINO runtime instead of ONNX Runtime. Every task (detect, segment, semantic, depth, classify, pose, obb) runs on `intel:cpu`, `intel:gpu` and `intel:npu`, and from Rust with `YOLOModel::load("yolo26n_openvino_model")`. Building needs no OpenVINO install, the runtime is loaded when the first model opens. Setup and details are in [`docs/OPENVINO.md`](docs/OPENVINO.md).
+
+```bash
+yolo export model=yolo26n.pt format=openvino # FP32, add half=True, int8=True, dynamic=True or batch=4
+ultralytics-inference predict --model yolo26n_openvino_model --source bus.jpg --device intel:gpu
+```
+
 **Available Features:**
 
 Default features (enabled unless `--no-default-features` is passed): `annotate`, `visualize`.
@@ -608,6 +618,7 @@ Default features (enabled unless `--no-default-features` is passed): `annotate`,
 | `cuda-preprocess` | GPU preprocessing + zero-copy TensorRT input (needs CUDA toolkit; see [`docs/CUDA.md`](docs/CUDA.md)) |
 | `coreml`          | Apple CoreML (macOS/iOS)                                                                              |
 | `openvino`        | Intel OpenVINO (Linux and Windows x64)                                                                |
+| `openvino-native` | Loads native OpenVINO IR (`.xml`) models, see [`docs/OPENVINO.md`](docs/OPENVINO.md)                  |
 | `onednn`          | Intel oneDNN                                                                                          |
 | `rocm`            | AMD ROCm (needs your own ONNX Runtime build, none is published)                                       |
 | `migraphx`        | AMD MIGraphX (Linux x64, `--device migraphx:0`)                                                       |

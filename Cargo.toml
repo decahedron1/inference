@@ -9,7 +9,7 @@ default-members = ["."]
 
 [package]
 name = "ultralytics-inference"
-version = "0.0.52"
+version = "0.0.53"
 edition = "2024"
 rust-version = "1.92"
 authors = [
@@ -137,6 +137,8 @@ clap = { version = "^4.6.1", features = ["derive"] }
 # rayon-backed parallelism for ndarray and fast_image_resize, native only.
 ndarray = { version = "^0.17", features = ["rayon"] }
 fast_image_resize = { version = "^6.0", features = ["image", "rayon"] }
+# Native OpenVINO IR (.xml) runtime, loaded from the installed libraries at run time (openvino-native feature).
+openvino = { version = "0.11.1", default-features = false, features = ["runtime-linking"], optional = true }
 
 [features]
 default = ["annotate", "visualize"]
@@ -161,6 +163,8 @@ rocm = ["ort/rocm"]
 
 # Intel acceleration (the downloaded ONNX Runtime includes the OpenVINO provider)
 openvino = ["ort/openvino"]
+# Native OpenVINO IR (.xml) models through the installed OpenVINO runtime, without ONNX Runtime
+openvino-native = ["dep:openvino"]
 onednn = ["ort/onednn"]
 
 # DirectML (Windows)

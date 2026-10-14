@@ -308,6 +308,10 @@
 //!
 //! # Intel OpenVINO
 //! cargo build --release --features openvino
+//!
+//! # Native OpenVINO IR (.xml) models, run by the OpenVINO runtime without ONNX Runtime
+//! # (see docs/OPENVINO.md for installing the runtime on Linux, Windows and macOS)
+//! cargo build --release --features openvino-native
 //! ```
 //!
 //! ## Results API
@@ -351,6 +355,7 @@
 //! | `cuda-preprocess` | GPU preprocessing with zero-copy `TensorRT` input |
 //! | `coreml` | Apple `CoreML` (macOS/iOS) |
 //! | `openvino` | Intel `OpenVINO` (Linux and Windows x64) |
+//! | `openvino-native` | Loads native `OpenVINO` IR (`.xml`) models, see [`openvino_guide`] |
 //! | `onednn` | Intel oneDNN |
 //! | `rocm` | AMD `ROCm` (needs your own `ONNX Runtime` build) |
 //! | `migraphx` | AMD `MIGraphX` (Linux x64) |
@@ -386,6 +391,11 @@ pub mod dgx_guide {}
 #[doc = include_str!("../docs/CUDA.md")]
 pub mod cuda_guide {}
 
+/// Native `OpenVINO` IR model guide rendered from `docs/OPENVINO.md`.
+#[allow(clippy::doc_markdown)]
+#[doc = include_str!("../docs/OPENVINO.md")]
+pub mod openvino_guide {}
+
 #[cfg(feature = "annotate")]
 pub mod annotate;
 pub mod device;
@@ -420,6 +430,8 @@ pub mod download;
 pub mod io;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod model;
+#[cfg(all(feature = "openvino-native", not(target_arch = "wasm32")))]
+mod openvino;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod source;
 

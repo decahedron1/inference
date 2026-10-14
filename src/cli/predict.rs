@@ -168,8 +168,12 @@ pub fn run_prediction(args: &PredictArgs) {
 
     let precision = precision_label(model.quantize());
     let device_str = provider_label(model.execution_provider());
-    println!("{DISPLAY_NAME} {VERSION} 🚀 Rust ONNX {precision} {device_str}");
-    println!("Using ONNX Runtime {}", model.execution_provider());
+    let (engine, runtime) = match model.execution_provider() {
+        "OpenVINO" => ("OpenVINO", "OpenVINO Runtime".to_owned()),
+        provider => ("ONNX", format!("ONNX Runtime {provider}")),
+    };
+    println!("{DISPLAY_NAME} {VERSION} 🚀 Rust {engine} {precision} {device_str}");
+    println!("Using {runtime}");
 
     let imgsz = model.imgsz();
     verbose!(
