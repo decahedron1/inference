@@ -5,12 +5,37 @@
 //! This module provides abstractions for various input sources including
 //! images, videos, webcams, and streaming URLs.
 
+use std::io::{BufRead, Cursor, Seek};
 use std::path::{Path, PathBuf};
 
-use image::DynamicImage;
+use image::{DynamicImage, ImageReader};
 use ndarray::Array3;
 
 use crate::error::{InferenceError, Result};
+
+/// Image extensions: the Ultralytics Python `IMG_FORMATS` plus `gif`.
+const IMAGE_EXTENSIONS: [&str; 14] = [
+    "avif", "bmp", "dng", "gif", "heic", "heif", "jp2", "jpeg", "jpg", "mpo", "png", "tif", "tiff",
+    "webp",
+];
+
+/// Decode an image by its contents rather than its extension, with JPEG 2000 support.
+fn decode_image<R: BufRead + Seek>(reader: ImageReader<R>) -> image::ImageResult<DynamicImage> {
+    hayro_jpeg2000::integration::register_decoding_hook();
+    reader.with_guessed_format()?.decode()
+}
+
+/// Open and decode the image file at `path`.
+pub(crate) fn open_image(path: &Path) -> image::ImageResult<DynamicImage> {
+    decode_image(ImageReader::open(path)?)
+}
+
+/// Check if a path is an image file based on extension.
+fn is_image_file(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| {
+        IMAGE_EXTENSIONS.contains(&ext.to_string_lossy().to_lowercase().as_str())
+    })
+}
 
 /// Represents different input sources for inference.
 #[derive(Debug, Clone)]
@@ -89,23 +114,8 @@ impl Source {
 
     /// Check if a URL points to an image based on extension.
     fn is_image_url(url: &str) -> bool {
-        let url_lower = url.to_lowercase();
         // Remove query parameters if present
-        let path_part = url_lower.split('?').next().unwrap_or(&url_lower);
-
-        std::path::Path::new(path_part)
-            .extension()
-            .is_some_and(|ext| {
-                let s = ext.to_string_lossy();
-                s.eq_ignore_ascii_case("jpg")
-                    || s.eq_ignore_ascii_case("jpeg")
-                    || s.eq_ignore_ascii_case("png")
-                    || s.eq_ignore_ascii_case("bmp")
-                    || s.eq_ignore_ascii_case("gif")
-                    || s.eq_ignore_ascii_case("webp")
-                    || s.eq_ignore_ascii_case("tiff")
-                    || s.eq_ignore_ascii_case("tif")
-            })
+        is_image_file(Path::new(url.split('?').next().unwrap_or(url)))
     }
 }
 
@@ -444,7 +454,7 @@ impl SourceIterator {
     /// Returns an error if the source cannot be opened (e.g. directory not found).
     pub fn new(source: Source) -> Result<Self> {
         let image_paths = match &source {
-            Source::Directory(path) => Self::collect_images_from_dir(path)?,
+            Source::Directory(path) => Self::collect_images_from_dir(path, None)?,
             Source::Glob(pattern) => Self::collect_images_from_glob(pattern)?,
             Source::Image(path) => vec![path.clone()],
             // URLs are handled separately via next_image_url
@@ -473,11 +483,11 @@ impl SourceIterator {
         })
     }
 
-    /// Collect image paths from a directory.
-    fn collect_images_from_dir(dir: &Path) -> Result<Vec<PathBuf>> {
+    /// Collect sorted image paths from a directory, only with extension `ext` when given.
+    fn collect_images_from_dir(dir: &Path, ext: Option<&str>) -> Result<Vec<PathBuf>> {
         if !dir.is_dir() {
             return Err(InferenceError::ImageError(format!(
-                "Not a directory: {}",
+                "Directory not found: {}",
                 dir.display()
             )));
         }
@@ -485,7 +495,15 @@ impl SourceIterator {
         let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)?
             .filter_map(std::result::Result::ok)
             .map(|entry| entry.path())
-            .filter(|path| Self::is_image_file(path))
+            .filter(|path| {
+                ext.map_or_else(
+                    || is_image_file(path),
+                    |ext| {
+                        path.extension()
+                            .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+                    },
+                )
+            })
             .collect();
 
         paths.sort();
@@ -497,59 +515,18 @@ impl SourceIterator {
     /// Note: This is a simplified glob implementation that only supports patterns like "dir/*.jpg"
     /// For more complex glob patterns, consider adding the `glob` crate.
     fn collect_images_from_glob(pattern: &str) -> Result<Vec<PathBuf>> {
-        // Simple glob: split into directory and extension pattern
-        // Supports patterns like "images/*.jpg" or "path/to/dir/*.png"
-        if let Some(star_pos) = pattern.find('*') {
-            let dir_part = &pattern[..star_pos];
-            let dir = if dir_part.is_empty() {
-                Path::new(".")
-            } else {
-                Path::new(dir_part.trim_end_matches('/').trim_end_matches('\\'))
-            };
-
-            // Get extension filter from pattern (e.g., "*.jpg" -> "jpg")
-            let ext_filter: Option<String> = pattern[star_pos..]
-                .strip_prefix("*.")
-                .map(str::to_lowercase);
-
-            if !dir.is_dir() {
-                return Err(InferenceError::ImageError(format!(
-                    "Directory not found: {}",
-                    dir.display()
-                )));
-            }
-
-            let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)?
-                .filter_map(std::result::Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    ext_filter.as_ref().map_or_else(
-                        || Self::is_image_file(path),
-                        |ext| {
-                            path.extension()
-                                .is_some_and(|e| e.to_string_lossy().to_lowercase() == *ext)
-                        },
-                    )
-                })
-                .collect();
-
-            paths.sort();
-            Ok(paths)
-        } else {
+        let Some(star_pos) = pattern.find('*') else {
             // No glob pattern, treat as single file
-            Ok(vec![PathBuf::from(pattern)])
-        }
-    }
-
-    /// Check if a path is an image file based on extension.
-    fn is_image_file(path: &Path) -> bool {
-        path.extension().is_some_and(|ext| {
-            let ext = ext.to_string_lossy().to_lowercase();
-            matches!(
-                ext.as_str(),
-                "jpg" | "jpeg" | "png" | "bmp" | "gif" | "webp" | "tiff" | "tif"
-            )
-        })
+            return Ok(vec![PathBuf::from(pattern)]);
+        };
+        let dir_part = &pattern[..star_pos];
+        let dir = if dir_part.is_empty() {
+            Path::new(".")
+        } else {
+            Path::new(dir_part.trim_end_matches(['/', '\\']))
+        };
+        // Get extension filter from pattern (e.g., "*.jpg" -> "jpg")
+        Self::collect_images_from_dir(dir, pattern[star_pos..].strip_prefix("*."))
     }
 
     /// Download an image from a URL.
@@ -563,7 +540,7 @@ impl SourceIterator {
             InferenceError::ImageError(format!("Failed to read response from {url}: {e}"))
         })?;
 
-        image::load_from_memory(&bytes).map_err(|e| {
+        decode_image(ImageReader::new(Cursor::new(bytes))).map_err(|e| {
             InferenceError::ImageError(format!("Failed to decode image from {url}: {e}"))
         })
     }
@@ -604,7 +581,7 @@ impl SourceIterator {
 
         self.current_frame += 1;
 
-        match image::open(path) {
+        match open_image(path) {
             Ok(img) => Some(Ok((img, meta))),
             Err(e) => Some(Err(InferenceError::ImageError(format!(
                 "Failed to load {}: {e}",
@@ -971,14 +948,16 @@ mod tests {
         write_image(&tmp.path().join("a.jpg"));
         std::fs::write(tmp.path().join("notes.txt"), b"ignore me").unwrap();
 
-        let paths = SourceIterator::collect_images_from_dir(tmp.path()).unwrap();
+        let paths = SourceIterator::collect_images_from_dir(tmp.path(), None).unwrap();
         // Only the two images, sorted by name.
         assert_eq!(paths.len(), 2);
         assert!(paths[0].ends_with("a.jpg"));
         assert!(paths[1].ends_with("b.png"));
 
         // Non-directory path is an error.
-        assert!(SourceIterator::collect_images_from_dir(Path::new("definitely/missing")).is_err());
+        assert!(
+            SourceIterator::collect_images_from_dir(Path::new("definitely/missing"), None).is_err()
+        );
     }
 
     #[test]
@@ -1080,5 +1059,25 @@ mod tests {
         }
         assert!(decoded >= 1);
         assert!(it.next().is_none());
+    }
+
+    /// One image per supported format (the COCO12-Formats dataset) loads. Skips offline.
+    #[test]
+    fn test_image_formats_load() {
+        let Ok(zip) = crate::download::download_image(
+            "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco12-formats.zip",
+        ) else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        zip::ZipArchive::new(std::fs::File::open(zip).unwrap())
+            .unwrap()
+            .extract(tmp.path())
+            .unwrap();
+        for split in ["train", "val"] {
+            let dir = tmp.path().join("coco12-formats/images").join(split);
+            let it = SourceIterator::new(Source::Directory(dir)).unwrap();
+            assert_eq!(it.map(Result::unwrap).count(), 6);
+        }
     }
 }

@@ -82,7 +82,6 @@ required-features = ["annotate"]
 [dependencies]
 # Core - Image loading and processing
 image = "^0.25"
-jpeg-decoder = "^0.3"
 # Base feature set is wasm-compatible; the `rayon` feature is added for native
 # targets only (see the `cfg(not(target_arch = "wasm32"))`
 fast_image_resize = { version = "^6.0", features = ["image"] }
@@ -130,6 +129,8 @@ ort = { version = "=2.0.0-rc.14", default-features = false, features = [
     "tls-native",
     "num-complex",
 ] }
+# JPEG 2000 (.jp2) decoding
+hayro-jpeg2000 = { version = "^0.4.1", default-features = false, features = ["image"] }
 ureq = "^3.3.0"
 dirs = "^7.0"
 rayon = "^1.12"
@@ -195,6 +196,7 @@ all = ["annotate", "visualize", "video"]
 [dev-dependencies]
 # Testing dependencies
 tempfile = "3"
+zip = { version = "^9.0", default-features = false, features = ["deflate-flate2"] }
 
 
 [profile.dev]

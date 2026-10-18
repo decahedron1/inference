@@ -359,6 +359,8 @@ YOLOv8、YOLO11 和 YOLO26 ONNX 模型支持 **n / s / m / l / x** 尺寸，并�
 | 摄像头     | `0`,`1`                         | 摄像头索引（0 为默认） |
 | URL        | `https://example.com/image.jpg` | 远程图片 URL           |
 
+支持的图片格式：`.avif`、`.bmp`、`.dng`、`.gif`、`.heic`、`.heif`、`.jp2`、`.jpeg`、`.jpg`、`.mpo`、`.png`、`.tif`、`.tiff` 和 `.webp`。
+
 ### 作为 Rust 库
 
 添加到 `Cargo.toml`（二选一）：
@@ -679,7 +681,6 @@ JS/TS 封装与构建说明见 [`web/`](web/README.md)。需要支持 WebGPU 的
 | `ort`               | ONNX Runtime 绑定       |
 | `ndarray`           | N 维数组                |
 | `image`             | 图片加载/解码           |
-| `jpeg-decoder`      | JPEG 解码               |
 | `fast_image_resize` | SIMD 优化 resize        |
 | `half`              | FP16 支持               |
 | `lru`               | 预处理 LUT 的 LRU cache |
