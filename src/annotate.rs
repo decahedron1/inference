@@ -19,6 +19,8 @@ use imageproc::drawing::{draw_filled_rect_mut, draw_hollow_rect_mut, draw_text_m
 use imageproc::rect::Rect;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 /// Assets URL for downloading fonts
 const ASSETS_URL: &str = "https://github.com/ultralytics/assets/releases/download/v0.0.0";
@@ -67,26 +69,62 @@ pub fn load_image(path: &str) -> image::ImageResult<DynamicImage> {
 /// cannot be created or the download fails.
 #[must_use]
 pub fn check_font(font: &str) -> Option<PathBuf> {
-    let font_name = Path::new(font).file_name()?.to_string_lossy();
-    let config_dir = dirs::config_dir()?.join("Ultralytics");
-    let font_path = config_dir.join(font_name.as_ref());
-
+    let font_path = font_path(font)?;
     if font_path.exists() {
         return Some(font_path);
     }
 
     // Create config directory if it doesn't exist
-    if let Err(e) = fs::create_dir_all(&config_dir) {
+    if let Err(e) = fs::create_dir_all(font_path.parent()?) {
         eprintln!("Failed to create config directory: {e}");
         return None;
     }
 
-    let url = format!("{ASSETS_URL}/{font_name}");
+    let url = format!("{ASSETS_URL}/{}", font_path.file_name()?.to_string_lossy());
     if let Err(e) = crate::download::download_file(&url, &font_path) {
         eprintln!("Failed to download font: {e}");
         return None;
     }
     Some(font_path)
+}
+
+/// Where `check_font` keeps `font`: the Ultralytics folder in the user config directory.
+fn font_path(font: &str) -> Option<PathBuf> {
+    Some(
+        dirs::config_dir()?
+            .join("Ultralytics")
+            .join(Path::new(font).file_name()?),
+    )
+}
+
+/// The label font, read once per process: every annotated frame needs it, and the Unicode
+/// face non-ASCII class names pick is about 23 MB. `None` while it is not available.
+///
+/// A failed download is retried at most once a minute, with calls arriving during an attempt
+/// waiting for it: retrying on every frame would wait out the download's retries and backoff
+/// each time (about 6 s per frame without network). A font file that appears on disk is read
+/// on the next call.
+#[allow(clippy::significant_drop_tightening)] // the lock is held so others wait for the download
+fn font_bytes(unicode: bool) -> Option<&'static [u8]> {
+    type Font = (OnceLock<Vec<u8>>, Mutex<Option<Instant>>);
+    static ARIAL: Font = (OnceLock::new(), Mutex::new(None));
+    static ARIAL_UNICODE: Font = (OnceLock::new(), Mutex::new(None));
+    let ((bytes, last_download), name) = if unicode {
+        (&ARIAL_UNICODE, "Arial.Unicode.ttf")
+    } else {
+        (&ARIAL, "Arial.ttf")
+    };
+    if let Some(bytes) = bytes.get() {
+        return Some(bytes);
+    }
+    let path = font_path(name)?;
+    let mut last = last_download.lock().unwrap_or_else(PoisonError::into_inner);
+    if !path.exists() && last.is_none_or(|t| t.elapsed() >= Duration::from_mins(1)) {
+        *last = Some(Instant::now());
+        let _ = check_font(name);
+    }
+    let data = fs::read(path).ok()?;
+    Some(bytes.get_or_init(|| data))
 }
 
 /// Overlay inference results onto `image` and return the annotated copy.
@@ -136,18 +174,8 @@ pub fn annotate_image_with(
 ) -> DynamicImage {
     let mut img = image.to_rgb8();
 
-    let font_name = if result.boxes.is_some() && result.names.values().any(|n| !n.is_ascii()) {
-        "Arial.Unicode.ttf"
-    } else {
-        "Arial.ttf"
-    };
-
-    let font_path = check_font(font_name);
-    let font_data = font_path.and_then(|path| fs::read(path).ok());
-
-    let font = font_data
-        .as_ref()
-        .and_then(|data| FontRef::try_from_slice(data).ok());
+    let unicode = result.boxes.is_some() && result.names.values().any(|n| !n.is_ascii());
+    let font = font_bytes(unicode).and_then(|data| FontRef::try_from_slice(data).ok());
 
     draw_semantic_mask(&mut img, result);
     draw_detection(&mut img, result, font.as_ref());
