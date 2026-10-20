@@ -1151,6 +1151,7 @@ impl YOLOModel {
         paths: &[String],
         speed: &Speed,
         inference_shape: (u32, u32),
+        config: &InferenceConfig,
     ) -> Vec<Vec<Results>> {
         let start_postprocess = Instant::now();
         let batch_results = image_arrays
@@ -1158,7 +1159,7 @@ impl YOLOModel {
             .enumerate()
             .map(|(i, orig_img)| {
                 let (data, shape) = &Self::slice_batch_output(outputs, i)[0];
-                vec![crate::postprocessing::postprocess_semantic_mask(
+                let results = crate::postprocessing::postprocess_semantic_mask(
                     data,
                     &shape[1..],
                     Arc::clone(names),
@@ -1166,6 +1167,9 @@ impl YOLOModel {
                     paths.get(i).cloned().unwrap_or_default(),
                     speed.clone(),
                     inference_shape,
+                );
+                vec![crate::postprocessing::filter_semantic_classes(
+                    results, config,
                 )]
             })
             .collect();
@@ -1217,6 +1221,7 @@ impl YOLOModel {
                 paths,
                 speed,
                 inference_shape,
+                config,
             ));
         }
         let bufs = output_names
@@ -2034,6 +2039,7 @@ impl YOLOModel {
                     paths,
                     &speed,
                     inference_shape,
+                    &self.config,
                 ));
             }
             let bufs = tensors
@@ -2482,7 +2488,8 @@ mod tests {
 
     #[test]
     fn test_semantic_mask_batch_results_builds_per_image() {
-        // Baked-in ArgMax semantic output: one 2x2 uint8 class map for one image.
+        // Baked-in ArgMax semantic output: one 2x2 uint8 class map for one image, with a
+        // `classes` filter that keeps only class 1 so class-0 pixels become IGNORE.
         let names = Arc::new(HashMap::from([
             (0usize, "bg".to_string()),
             (1, "road".to_string()),
@@ -2500,6 +2507,7 @@ mod tests {
             &paths,
             &Speed::new(1.0, 10.0, 0.0),
             (32, 32),
+            &InferenceConfig::new().with_classes(vec![1]),
         );
         assert_eq!(batch.len(), 1);
         let results = &batch[0][0];
@@ -2507,7 +2515,8 @@ mod tests {
             .semantic_mask
             .as_ref()
             .expect("semantic mask present");
-        assert_eq!(sm.data.shape(), [2, 2]);
+        let ignore = crate::results::SemanticMask::IGNORE;
+        assert_eq!(sm.data.as_slice().unwrap(), [ignore, 1, 1, ignore]);
         assert!(results.speed.postprocess.is_some());
     }
 }
