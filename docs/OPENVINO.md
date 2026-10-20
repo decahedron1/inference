@@ -7,7 +7,7 @@
 ```toml
 # Cargo.toml
 [dependencies]
-ultralytics-inference = { version = "0.0", features = ["openvino-native"] }
+ultralytics-inference = { version = "0.0.54", features = ["openvino-native"] }
 ```
 
 ```bash
@@ -69,7 +69,7 @@ source "/path/to/extracted-folder/setupvars.sh"
 ## Export and run
 
 ```bash
-yolo export model=yolo26n.pt format=openvino # add half=True, int8=True, dynamic=True or batch=4
+yolo export model=yolo26n.pt format=openvino # add quantize=16, quantize=8, dynamic=True or batch=4
 ultralytics-inference predict --model yolo26n_openvino_model --source bus.jpg --device intel:gpu
 ```
 
@@ -95,7 +95,7 @@ The run prints `Using OpenVINO Runtime` when the native path is active.
 - Dynamic exports are pinned to a static shape, using `--imgsz` and `--batch`.
 - The NPU runs at batch 1, and larger batches are split into single images.
 - The export fixes the precision (FP32, FP16 or INT8), so `--quantize` has no effect and prints a warning.
-- Only Intel devices (`intel:cpu`, `intel:gpu`, `intel:npu`) are accepted, other devices give an error.
+- Only `cpu` and the Intel devices (`intel:cpu`, `intel:gpu`, `intel:npu`) are accepted, other devices give an error.
 - Depth models skip the graph's final upsample and are resampled on the host. NPU depth values still differ from the CPU, an NPU precision limit also seen in Python.
 
 [gpu]: https://docs.openvino.ai/2026/get-started/install-openvino/configurations/configurations-intel-gpu.html
