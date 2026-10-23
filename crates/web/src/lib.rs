@@ -562,7 +562,7 @@ impl YoloModel {
         let run_options = RunOptions::new().map_err(map_ort)?;
         let mut outputs = self
             .session
-            .run_async(ort::inputs![input.view()], &run_options)
+            .run_async(ort::inputs![input], &run_options)
             .await
             .map_err(err_ctx("inference failed"))?;
         // Outputs live in the ONNX Runtime wasm context; copy them back to Rust.
