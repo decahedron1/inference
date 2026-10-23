@@ -23,66 +23,19 @@ use wide::f32x8;
 #[allow(clippy::wildcard_imports)] // native: rayon prelude; wasm: sequential shims
 use crate::parallel::*;
 use fast_image_resize::images::{Image, ImageRef};
-use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
+use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions};
 use ndarray::{Array2, Array3, ArrayView1, ArrayView2, ArrayViewMut2, Zip, s};
 
 use crate::inference::InferenceConfig;
-use crate::preprocessing::{PreprocessResult, clip_coords, scale_coords};
+use crate::preprocessing::{PreprocessResult, clip_coords, resize, scale_coords};
 use crate::results::{Boxes, DepthMap, Keypoints, Masks, Obb, Probs, Results, SemanticMask, Speed};
 use crate::task::Task;
-use crate::utils::{nms_per_class_capped, nms_rotated_per_class_capped, xywh_to_xyxy};
+use crate::utils::{nms_per_class, nms_rotated_per_class, xywh_to_xyxy};
 
-/// Post-process raw model output based on task type.
+/// Post-process raw model output into [`Results`] for `task`, selecting the RT-DETR decode
+/// when `rtdetr` is set.
 ///
-/// # Arguments
-///
-/// * `outputs` - Vector of raw model outputs (data, shape).
-/// * `task` - The task type (detect, segment, pose, etc.).
-/// * `preprocess` - Preprocessing result containing scale/padding info.
-/// * `config` - Inference configuration.
-/// * `names` - Class ID to name mapping.
-/// * `orig_img` - Original image as HWC array.
-/// * `path` - Source image path.
-/// * `speed` - Timing information.
-/// * `inference_shape` - The inference tensor shape (height, width) after letterboxing.
-///
-/// # Returns
-///
-/// Processed Results object.
-#[must_use]
-#[allow(clippy::too_many_arguments, clippy::implicit_hasher)]
-pub fn postprocess(
-    outputs: Vec<(&[f32], Vec<usize>)>,
-    task: Task,
-    preprocess: &PreprocessResult,
-    config: &InferenceConfig,
-    names: Arc<HashMap<usize, String>>,
-    orig_img: Array3<u8>,
-    path: String,
-    speed: Speed,
-    inference_shape: (u32, u32),
-    end2end: bool,
-    kpt_shape: Option<(usize, usize)>,
-) -> Results {
-    postprocess_with_head(
-        outputs,
-        task,
-        preprocess,
-        config,
-        names,
-        orig_img,
-        path,
-        speed,
-        inference_shape,
-        end2end,
-        kpt_shape,
-        false,
-    )
-}
-
-/// Post-process raw model output, selecting the RT-DETR decode when `rtdetr` is set.
-///
-/// Same as [`postprocess`], plus `rtdetr`: RT-DETR shares the `[1, max_det, 6]` tensor shape
+/// RT-DETR shares the `[1, max_det, 6]` tensor shape
 /// of the NMS-free YOLO head but reports `[cx, cy, w, h]` normalized to the input, so the two
 /// cannot be told apart from the tensors alone and the caller has to say which it holds.
 #[must_use]
@@ -137,22 +90,7 @@ pub fn postprocess_with_head(
         }
         Task::Semantic => {
             let (output, shape) = &outputs[0];
-            let n_classes = results.names.len();
-            let mut results = postprocess_semantic(output, shape, results);
-            // Adapt the `classes` filter to semantic segmentation: pixels whose
-            // class is not kept become IGNORE. Only meaningful for multi-class
-            // models, matching Ultralytics.
-            if n_classes > 1
-                && config.classes.is_some()
-                && let Some(sm) = results.semantic_mask.as_mut()
-            {
-                for px in &mut sm.data {
-                    if !config.keep_class(usize::from(*px)) {
-                        *px = SemanticMask::IGNORE;
-                    }
-                }
-            }
-            results
+            filter_semantic_classes(postprocess_semantic(output, shape, results), config)
         }
         Task::Depth => {
             let (output, shape) = &outputs[0];
@@ -386,47 +324,49 @@ fn best_class_score(scores: &ArrayView1<f32>) -> (usize, f32) {
         .unwrap_or((0, f32::NEG_INFINITY))
 }
 
-/// Decode row `i` of a `[preds, features]` head into a detection candidate.
+/// Decode a `[preds, features]` head, run per-class NMS and return the kept detections as
+/// `[x1, y1, x2, y2, score, class]` rows, plus the head row each came from so the caller can
+/// read its extra columns (mask coefficients, keypoints).
 ///
-/// Picks the best of the `num_classes` class scores and, when it clears the confidence
-/// threshold and the class filter, returns the box scaled back to the original image and
-/// clipped to it, with its score and class. `None` means the row is dropped.
-fn decode_row(
+/// A row is a candidate when its best of the `num_classes` class scores is above the
+/// confidence threshold and passes the class filter; its box is scaled back to the original
+/// image. NMS runs on the unclipped boxes, as for detect, and the kept boxes are clipped.
+fn decode_nms(
     output_2d: &Array2<f32>,
-    i: usize,
     num_classes: usize,
     preprocess: &PreprocessResult,
     config: &InferenceConfig,
-) -> Option<([f32; 4], f32, usize)> {
-    let (best_class, best_score) = best_class_score(&output_2d.slice(s![i, 4..4 + num_classes]));
-    if best_score < config.confidence_threshold || !config.keep_class(best_class) {
-        return None;
+) -> (Array2<f32>, Vec<usize>) {
+    let mut rows = Vec::new();
+    let mut candidates = Vec::new();
+    for i in 0..output_2d.nrows() {
+        let (best_class, best_score) =
+            best_class_score(&output_2d.slice(s![i, 4..4 + num_classes]));
+        if best_score <= config.confidence_threshold || !config.keep_class(best_class) {
+            continue;
+        }
+        let bbox = scale_coords(
+            &xywh_to_xyxy(
+                output_2d[[i, 0]],
+                output_2d[[i, 1]],
+                output_2d[[i, 2]],
+                output_2d[[i, 3]],
+            ),
+            preprocess.scale,
+            preprocess.padding,
+        );
+        candidates.push((bbox, best_score, best_class));
+        rows.push(i);
     }
-    let bbox = scale_and_clip_box(
-        &xywh_to_xyxy(
-            output_2d[[i, 0]],
-            output_2d[[i, 1]],
-            output_2d[[i, 2]],
-            output_2d[[i, 3]],
-        ),
-        preprocess,
-    );
-    Some((bbox, best_score, best_class))
-}
 
-/// Run per-class NMS over `(bbox, score, class, extra)` candidates and return the kept
-/// indices, capped at `max_det`. The `extra` payload (mask index, keypoints, ...) is
-/// ignored here and looked up by the caller via the returned indices.
-fn nms_keep_indices<T>(
-    candidates: &[([f32; 4], f32, usize, T)],
-    iou_threshold: f32,
-    max_det: usize,
-) -> Vec<usize> {
-    let nms_candidates: Vec<_> = candidates
-        .iter()
-        .map(|(bbox, score, class, _)| (*bbox, *score, *class))
-        .collect();
-    nms_per_class_capped(&nms_candidates, iou_threshold, max_det)
+    let keep = nms_per_class(&candidates, config.iou_threshold, config.max_det);
+    let mut boxes = Array2::zeros((keep.len(), 6));
+    for (out_idx, &k) in keep.iter().enumerate() {
+        let (bbox, score, class) = &candidates[k];
+        let bbox = clip_coords(bbox, preprocess.orig_shape);
+        write_box_row(&mut boxes, out_idx, &bbox, *score, *class);
+    }
+    (boxes, keep.iter().map(|&k| rows[k]).collect())
 }
 
 /// Write one `[x1, y1, x2, y2, score, class]` detection row into a `(_, 6)` boxes array.
@@ -491,7 +431,7 @@ struct Candidate {
 ///
 /// Key optimizations:
 /// - SIMD-accelerated candidate extraction (f32x8)
-/// - Parallel Bitmask NMS (IoU 1 vs 8)
+/// - SIMD bitmask NMS (IoU 1 vs 8)
 /// - Struct-of-Arrays (SoA) layout for NMS cache locality
 /// - Direct unsafe indexing for performance
 #[allow(clippy::cast_precision_loss, clippy::too_many_arguments)]
@@ -762,7 +702,6 @@ fn apply_mask_proto(
         return;
     };
 
-    let mut resizer = Resizer::new();
     let resize_alg = ResizeAlg::Convolution(FilterType::Bilinear);
 
     // Horizontal pass: every prototype row resized to the full output width. Keeping all
@@ -774,7 +713,7 @@ fn apply_mask_proto(
         f64::from(crop_w.max(1.0).min(mw as f32)),
         mh as f64,
     );
-    if resizer.resize(&src_image, &mut rows, &options).is_err() {
+    if resize(&src_image, &mut rows, &options).is_err() {
         return;
     }
 
@@ -791,7 +730,7 @@ fn apply_mask_proto(
         box_w as f64,
         box_h as f64 * row_scale,
     );
-    if resizer.resize(&rows, &mut cols, &options).is_err() {
+    if resize(&rows, &mut cols, &options).is_err() {
         return;
     }
 
@@ -925,35 +864,16 @@ fn postprocess_segment(
         return results;
     }
 
-    // Filter and NMS. The original row index is kept to look the coefficients up later.
-    let candidates: Vec<([f32; 4], f32, usize, usize)> = (0..num_preds)
-        .filter_map(|i| {
-            decode_row(&output_2d, i, nc, preprocess, config)
-                .map(|(bbox, score, class)| (bbox, score, class, i))
-        })
-        .collect();
-
-    if candidates.is_empty() {
+    let (boxes_data, kept_rows) = decode_nms(&output_2d, nc, preprocess, config);
+    if kept_rows.is_empty() {
         return results;
     }
 
-    // Prepare candidates for NMS (bbox, score, class)
-    let keep_indices = nms_keep_indices(&candidates, config.iou_threshold, config.max_det);
-    let num_kept = keep_indices.len();
-
-    let mut boxes_data = Array2::zeros((num_kept, 6));
-    let mut mask_coeffs = Array2::zeros((num_kept, num_masks));
-
-    for (out_idx, &keep_idx) in keep_indices.iter().enumerate() {
-        let (bbox, score, class, orig_idx) = &candidates[keep_idx];
-        write_box_row(&mut boxes_data, out_idx, bbox, *score, *class);
-
-        // Extract coefficients: [orig_idx, 4+nc..]
-        let start = 4 + nc;
-        let coeffs = output_2d.slice(s![*orig_idx, start..start + num_masks]);
-        for m in 0..num_masks {
-            mask_coeffs[[out_idx, m]] = coeffs[m];
-        }
+    // Each kept row's mask coefficients follow its class scores.
+    let start = 4 + nc;
+    let mut mask_coeffs = Array2::zeros((kept_rows.len(), num_masks));
+    for (mut coeffs, &row) in mask_coeffs.outer_iter_mut().zip(&kept_rows) {
+        coeffs.assign(&output_2d.slice(s![row, start..start + num_masks]));
     }
 
     // Protos: [1, 32, 160, 160] -> [32, 25600]
@@ -996,13 +916,13 @@ fn postprocess_segment(
     results
 }
 
-/// Derive `(num_preds, is_transposed)` from a pose/OBB output shape.
+/// Derive `(num_preds, is_transposed)` from a segment, pose or OBB output shape.
 ///
 /// A `[1, features, preds]` layout is detected when the feature axis equals
 /// `expected_features`, or is the smaller axis while still holding at least
-/// `min_transposed_features` (pose passes `4 + kpt_features`, OBB passes `6`); otherwise
-/// the output is treated as the transposed `[1, preds, features]`. 2D shapes pick the
-/// larger axis as the prediction count; anything else yields `(0, false)`.
+/// `min_transposed_features` (segment passes `expected_features`, pose `4 + kpt_features`,
+/// OBB `6`); otherwise the output is treated as the transposed `[1, preds, features]`. 2D
+/// shapes pick the larger axis as the prediction count; anything else yields `(0, false)`.
 const fn parse_transposed_shape(
     shape: &[usize],
     expected_features: usize,
@@ -1088,26 +1008,15 @@ fn postprocess_pose(
         return results;
     }
 
-    // Filter and NMS. The original row index is kept to decode keypoints for kept rows only.
-    let candidates: Vec<([f32; 4], f32, usize, usize)> = (0..num_preds)
-        .filter_map(|i| {
-            decode_row(&output_2d, i, num_classes, preprocess, config)
-                .map(|(bbox, score, class)| (bbox, score, class, i))
-        })
-        .collect();
-
-    let keep_indices = nms_keep_indices(&candidates, config.iou_threshold, config.max_det);
-    let num_kept = keep_indices.len();
-
-    let mut boxes_data = Array2::zeros((num_kept, 6));
+    // Keypoints are decoded for kept rows only.
+    let (boxes_data, kept_rows) = decode_nms(&output_2d, num_classes, preprocess, config);
+    let num_kept = kept_rows.len();
     let mut flat_kpts: Vec<f32> = Vec::with_capacity(num_kept * kpt_features);
     let kpt_start = 4 + num_classes;
 
-    for (out_idx, &keep_idx) in keep_indices.iter().enumerate() {
-        let (bbox, score, class, row) = &candidates[keep_idx];
-        write_box_row(&mut boxes_data, out_idx, bbox, *score, *class);
+    for &row in &kept_rows {
         push_keypoints(
-            &output_2d.slice(s![*row, kpt_start..]),
+            &output_2d.slice(s![row, kpt_start..]),
             num_keypoints,
             kpt_dim,
             preprocess,
@@ -1220,80 +1129,50 @@ fn postprocess_obb(
         return results;
     }
 
-    // Derive number of classes from features: features = 4 + nc + 1
-    let derived_classes = actual_features.saturating_sub(5); // 4 bbox + 1 angle
-    let num_classes = derived_classes.max(1);
+    // The head's own width sets the class count: features = 4 + nc + 1 (angle).
+    let num_classes = actual_features.saturating_sub(5).max(1);
 
-    // Filter and NMS - store candidates with angle
-    // [cx, cy, w, h, angle], conf, class
+    // Candidates as ([cx, cy, w, h, angle], conf, class); the angle (radians) is the last column.
     let mut candidates: Vec<([f32; 5], f32, usize)> = Vec::with_capacity(256);
-
     for i in 0..num_preds {
-        // Get class scores
-        let class_scores = output_2d.slice(s![i, 4..4 + num_classes]);
-        let (best_class, best_score) = best_class_score(&class_scores);
-
-        if best_score < config.confidence_threshold {
+        let (best_class, best_score) =
+            best_class_score(&output_2d.slice(s![i, 4..4 + num_classes]));
+        if best_score <= config.confidence_threshold || !config.keep_class(best_class) {
             continue;
         }
-
-        // Extract OBB: xywh + rotation
-        let cx = output_2d[[i, 0]];
-        let cy = output_2d[[i, 1]];
-        let w = output_2d[[i, 2]];
-        let h = output_2d[[i, 3]];
-        let angle = output_2d[[i, 4 + num_classes]]; // Last value is rotation angle (radians)
-
-        // Scale center to original image space and clip to bounds.
-        let (clipped_cx, clipped_cy) = scale_keypoint(cx, cy, preprocess);
-
-        // Scale width and height (note: don't apply padding, just scale)
-        let scaled_w = w / preprocess.scale.1;
-        let scaled_h = h / preprocess.scale.0;
-
-        // Filter by class if specified
-        if !config.keep_class(best_class) {
-            continue;
-        }
-
-        candidates.push((
-            [clipped_cx, clipped_cy, scaled_w, scaled_h, angle],
-            best_score,
-            best_class,
-        ));
+        let row = output_2d.row(i);
+        let [cx, cy, w, h] = scale_xywh(row[0], row[1], row[2], row[3], preprocess);
+        candidates.push(([cx, cy, w, h, row[4 + num_classes]], best_score, best_class));
     }
 
-    if candidates.is_empty() {
-        results.obb = Some(Obb::new(Array2::zeros((0, 7)), preprocess.orig_shape));
-        return results;
-    }
+    // Rotated NMS with ProbIoU (Hellinger distance), since axis-aligned IoU misjudges the
+    // overlap of rotated boxes.
+    let keep_indices = nms_rotated_per_class(&candidates, config.iou_threshold, config.max_det);
 
-    // Apply Rotated NMS for precise suppression using ProbIoU (Hellinger distance).
-    // This ensures that overlapping rotated boxes are correctly filtered based on their
-    // actual geometric overlap, which standard axis-aligned IoU cannot handle.
-    let keep_indices =
-        nms_rotated_per_class_capped(&candidates, config.iou_threshold, config.max_det);
-    let num_kept = keep_indices.len();
-
-    // Build output array: [cx, cy, w, h, rotation, conf, cls]
-    let mut obb_data = Array2::zeros((num_kept, 7));
-
-    for (out_idx, &keep_idx) in keep_indices.iter().take(num_kept).enumerate() {
-        let (xywhr, score, class) = &candidates[keep_idx];
-        obb_data[[out_idx, 0]] = xywhr[0]; // cx
-        obb_data[[out_idx, 1]] = xywhr[1]; // cy
-        obb_data[[out_idx, 2]] = xywhr[2]; // w
-        obb_data[[out_idx, 3]] = xywhr[3]; // h
-        obb_data[[out_idx, 4]] = xywhr[4]; // rotation (radians)
-        obb_data[[out_idx, 5]] = *score;
+    // Output rows: [cx, cy, w, h, rotation, conf, cls]
+    let mut obb_data = Array2::zeros((keep_indices.len(), 7));
+    for (mut out, &k) in obb_data.outer_iter_mut().zip(&keep_indices) {
+        let (xywhr, score, class) = &candidates[k];
         #[allow(clippy::cast_precision_loss)]
-        let class_f32 = *class as f32;
-        obb_data[[out_idx, 6]] = class_f32;
+        out.assign(&ArrayView1::from(&[
+            xywhr[0],
+            xywhr[1],
+            xywhr[2],
+            xywhr[3],
+            xywhr[4],
+            *score,
+            *class as f32,
+        ]));
     }
-
     results.obb = Some(Obb::new(obb_data, preprocess.orig_shape));
-
     results
+}
+
+/// Scale an OBB `[cx, cy, w, h]` from letterboxed inference space to the original image: the
+/// center is shifted, scaled and clipped like a keypoint, the size is only scaled.
+fn scale_xywh(cx: f32, cy: f32, w: f32, h: f32, preprocess: &PreprocessResult) -> [f32; 4] {
+    let (cx, cy) = scale_keypoint(cx, cy, preprocess);
+    [cx, cy, w / preprocess.scale.1, h / preprocess.scale.0]
 }
 
 // Postprocessing for the YOLO26 NMS-free one-to-one head (`nms=False`) and
@@ -1307,7 +1186,8 @@ fn postprocess_obb(
 
 /// Walk an end-to-end output and, for each row above the confidence threshold that
 /// passes the class filter, scale/clip its box and invoke `on_kept(base, [x1,y1,x2,y2],
-/// conf, cls)`. Skip NaN and sub-threshold scores, stopping after `cap` kept detections.
+/// conf, cls)`. Skip NaN scores and scores at or below the threshold, stopping after `cap` kept
+/// detections.
 /// Shared by the detect, segment, pose and OBB paths.
 ///
 /// `normalized_to` names the inference `(height, width)` for heads whose first four columns
@@ -1328,7 +1208,7 @@ fn decode_end2end(
     for i in 0..num_preds {
         let base = i * feats;
         let conf = output[base + 4];
-        if conf.is_nan() || conf < config.confidence_threshold {
+        if conf.is_nan() || conf <= config.confidence_threshold {
             continue;
         }
         let cls = output[base + 5] as usize;
@@ -1563,7 +1443,6 @@ fn postprocess_obb_end2end(
         let max_det = output_shape[1];
         let feats = output_shape[2];
         if feats >= 7 && max_det > 0 {
-            let (scale_y, scale_x) = preprocess.scale;
             let user_cap = config.max_det.min(max_det);
             flat.reserve(user_cap * 7);
 
@@ -1578,16 +1457,14 @@ fn postprocess_obb_end2end(
                 user_cap,
                 None,
                 |base, _bbox, conf, cls| {
-                    let (cx, cy) = scale_keypoint(output[base], output[base + 1], preprocess);
-                    flat.extend_from_slice(&[
-                        cx,
-                        cy,
-                        output[base + 2] / scale_x,
-                        output[base + 3] / scale_y,
-                        output[base + 6],
-                        conf,
-                        cls as f32,
-                    ]);
+                    let [cx, cy, w, h] = scale_xywh(
+                        output[base],
+                        output[base + 1],
+                        output[base + 2],
+                        output[base + 3],
+                        preprocess,
+                    );
+                    flat.extend_from_slice(&[cx, cy, w, h, output[base + 6], conf, cls as f32]);
                 },
             );
         }
@@ -1604,6 +1481,24 @@ fn postprocess_obb_end2end(
 fn finish_semantic_mask(mut results: Results, buf: Vec<u16>, oh: usize, ow: usize) -> Results {
     let class_map = Array2::from_shape_vec((oh, ow), buf).expect("shape matches");
     results.semantic_mask = Some(SemanticMask::new(class_map, (oh as u32, ow as u32)));
+    results
+}
+
+/// Adapt the `classes` filter to semantic segmentation: pixels whose class `config` does not
+/// keep become [`SemanticMask::IGNORE`]. Only meaningful for multi-class models, matching
+/// Ultralytics.
+#[must_use]
+pub fn filter_semantic_classes(mut results: Results, config: &InferenceConfig) -> Results {
+    if results.names.len() > 1
+        && config.classes.is_some()
+        && let Some(sm) = results.semantic_mask.as_mut()
+    {
+        for px in &mut sm.data {
+            if !config.keep_class(usize::from(*px)) {
+                *px = SemanticMask::IGNORE;
+            }
+        }
+    }
     results
 }
 
@@ -1725,7 +1620,8 @@ pub fn postprocess_semantic_mask(
         return finish_semantic_mask(results, buf, oh, ow);
     }
 
-    // Slow path: crop centered letterbox padding in semantic-mask space, then NN upsample.
+    // Slow path: crop centered letterbox padding in semantic-mask space, then NN upsample,
+    // sampling source index `floor(d * scale)` like torch's `F.interpolate(mode="nearest")`.
     let Some((top, left, crop_h, crop_w)) = letterbox_crop_bounds(lh, lw, oh, ow) else {
         return results;
     };
@@ -1735,13 +1631,13 @@ pub fn postprocess_semantic_mask(
     let crop_h_minus_1 = crop_h.saturating_sub(1);
     let crop_w_minus_1 = crop_w.saturating_sub(1);
     let x_lut: Vec<usize> = (0..ow)
-        .map(|dx| ((dx as f32 + 0.5) * scale_x) as usize)
+        .map(|dx| (dx as f32 * scale_x) as usize)
         .map(|sx| sx.min(crop_w_minus_1) + left)
         .collect();
 
     let mut buf = vec![0u16; oh * ow];
     buf.par_chunks_mut(ow).enumerate().for_each(|(dy, row)| {
-        let sy = (((dy as f32 + 0.5) * scale_y) as usize).min(crop_h_minus_1) + top;
+        let sy = ((dy as f32 * scale_y) as usize).min(crop_h_minus_1) + top;
         let src_row_base = sy * lw;
         for (dx, cell) in row.iter_mut().enumerate() {
             *cell = u16::from(output[src_row_base + x_lut[dx]]);
@@ -1889,52 +1785,44 @@ fn postprocess_semantic(output: &[f32], shape: &[usize], results: Results) -> Re
     let scale_y = crop_h as f32 / oh as f32;
     let lh_minus_1 = lh.saturating_sub(1);
 
-    // Bilinear upsample and argmax directly on CHW data, skipping the transpose.
-    // Reads are strided (one plane apart per class) but avoids transposing 39M floats.
+    // Bilinear upsample and argmax directly on CHW data, skipping the transpose. Each output
+    // row walks one class plane at a time, so its two source rows stay in cache, and keeps
+    // the running best per pixel; the per-pixel math and class order are unchanged.
     let mut buf = vec![0u16; oh * ow];
-    buf.par_chunks_mut(ow).enumerate().for_each(|(dy, row)| {
-        let (y0, y1, fy) = bilinear_axis(dy, scale_y, top, lh_minus_1);
-        let fyi = 1.0 - fy;
-
-        let row0_base = y0 * lw;
-        let row1_base = y1 * lw;
-
-        for (dx, cell) in row.iter_mut().enumerate() {
-            let (x0, x1, fxi, fx) = x_lut[dx];
-            let w00 = fyi * fxi;
-            let w10 = fy * fxi;
-            let w01 = fyi * fx;
-            let w11 = fy * fx;
-
-            // Interpolate class `c`'s logit from its four neighbors in that class's plane.
-            let logit = |c: usize| {
-                let base = c * plane;
-                output[base + row1_base + x1].mul_add(
-                    w11,
-                    output[base + row0_base + x1].mul_add(
-                        w01,
-                        output[base + row1_base + x0]
-                            .mul_add(w10, output[base + row0_base + x0] * w00),
-                    ),
-                )
-            };
-
-            *cell = if nc == 1 {
-                u16::from(logit(0) > 0.0)
-            } else {
-                let mut best_cls = 0u16;
-                let mut best_val = f32::NEG_INFINITY;
-                for c in 0..nc {
-                    let v = logit(c);
-                    if v > best_val {
-                        best_val = v;
-                        best_cls = c as u16;
+    buf.par_chunks_mut(ow).enumerate().for_each_with(
+        (vec![0.0f32; ow], vec![[0.0f32; 4]; ow]),
+        |(best_vals, weights), (dy, row)| {
+            let (y0, y1, fy) = bilinear_axis(dy, scale_y, top, lh_minus_1);
+            let fyi = 1.0 - fy;
+            for (w, &(_, _, fxi, fx)) in weights.iter_mut().zip(&x_lut) {
+                *w = [fyi * fxi, fy * fxi, fyi * fx, fy * fx];
+            }
+            best_vals.fill(f32::NEG_INFINITY);
+            for c in 0..nc {
+                let r0 = &output[c * plane + y0 * lw..][..lw];
+                let r1 = &output[c * plane + y1 * lw..][..lw];
+                for (((cell, best), &(x0, x1, _, _)), &[w00, w10, w01, w11]) in row
+                    .iter_mut()
+                    .zip(best_vals.iter_mut())
+                    .zip(&x_lut)
+                    .zip(weights.iter())
+                {
+                    let v =
+                        r1[x1].mul_add(w11, r0[x1].mul_add(w01, r1[x0].mul_add(w10, r0[x0] * w00)));
+                    if v > *best {
+                        *best = v;
+                        *cell = c as u16;
                     }
                 }
-                best_cls
-            };
-        }
-    });
+            }
+            // A single-channel head is a binary mask: foreground where its logit is positive.
+            if nc == 1 {
+                for (cell, &v) in row.iter_mut().zip(best_vals.iter()) {
+                    *cell = u16::from(v > 0.0);
+                }
+            }
+        },
+    );
     finish_semantic_mask(results, buf, oh, ow)
 }
 
@@ -2789,14 +2677,16 @@ mod tests {
 
     #[test]
     fn test_postprocess_detect_end2end_thresholds() {
-        // Row0 above threshold, row1 below -> only one detection kept.
+        // Row0 above threshold, row1 below and row2 equal to it -> only one detection kept,
+        // since Ultralytics keeps scores strictly above the threshold.
         let output = [
             10.0, 10.0, 50.0, 50.0, 0.9, 0.0, // keep
             10.0, 10.0, 20.0, 20.0, 0.1, 0.0, // drop
+            60.0, 60.0, 90.0, 90.0, 0.25, 0.0, // drop
         ];
         let r = postprocess_detect_end2end(
             &output,
-            &[1, 2, 6],
+            &[1, 3, 6],
             &unit_preprocess((100, 100)),
             &InferenceConfig::default(), // conf threshold 0.25
             results_for(1, (100, 100), (640, 640)),

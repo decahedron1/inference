@@ -244,7 +244,7 @@ ultralytics-inference predict
 ```text
 WARNING ⚠️ 'model' argument is missing. Using default '--model=yolo26n.onnx'.
 WARNING ⚠️ 'source' argument is missing. Using default images: https://ultralytics.com/images/bus.jpg, https://ultralytics.com/images/zidane.jpg
-Ultralytics Inference 0.0.53 🚀 Rust ONNX FP32 CPU
+Ultralytics Inference 0.0.54 🚀 Rust ONNX FP32 CPU
 Using ONNX Runtime CPUExecutionProvider
 YOLO26n summary: 80 classes, imgsz=(640, 640)
 
@@ -264,7 +264,7 @@ ultralytics-inference predict --task segment
 ```text
 WARNING ⚠️ 'model' argument is missing. Using default '--model=yolo26n-seg.onnx'.
 WARNING ⚠️ 'source' argument is missing. Using default images: https://ultralytics.com/images/bus.jpg, https://ultralytics.com/images/zidane.jpg
-Ultralytics Inference 0.0.53 🚀 Rust ONNX FP32 CPU
+Ultralytics Inference 0.0.54 🚀 Rust ONNX FP32 CPU
 Using ONNX Runtime CPUExecutionProvider
 YOLO26n-seg summary: 80 classes, imgsz=(640, 640)
 
@@ -294,25 +294,25 @@ ultralytics-inference predict --model yolo26n.onnx --source image.jpg
 
 **CLI Options:**
 
-| Option               | Short | Description                                                                                                                                                                                                       | Default                                                                      |
-| -------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `--model`            | `-m`  | Path to ONNX model file; auto-downloaded if a known YOLOv8/YOLO11/YOLO26 name                                                                                                                                     | `yolo26n.onnx`                                                               |
-| `--task`             |       | Task type (`detect`, `segment`, `semantic`\*, `depth`\*, `classify`, `pose`, `obb`); selects nano model when `--model` is omitted                                                                                 | `detect`                                                                     |
-| `--source`           | `-s`  | Input source (image, directory, glob, video, webcam index, or URL)                                                                                                                                                | Task-dependent Ultralytics URL assets                                        |
-| `--conf`             |       | Confidence threshold                                                                                                                                                                                              | `0.25`                                                                       |
-| `--iou`              |       | IoU threshold for NMS                                                                                                                                                                                             | `0.7`                                                                        |
-| `--max-det`          |       | Maximum number of detections                                                                                                                                                                                      | `300`                                                                        |
-| `--imgsz`            |       | Inference image size                                                                                                                                                                                              | model metadata                                                               |
-| `--rect [<BOOL>]`    |       | Enable rectangular inference (minimal padding)                                                                                                                                                                    | `true`                                                                       |
-| `--batch`            |       | Batch size for inference                                                                                                                                                                                          | `1`                                                                          |
-| `--quantize`         |       | Inference precision: `8`, `16`, `32`, `int8`, `fp16`, `fp32`, `w8a8`, `w16a16`, `w32a32`, `w8a16`, or `w8a32`                                                                                                     | Model precision                                                              |
-| `--save [<BOOL>]`    |       | Save annotated results to runs/\<task\>/predict                                                                                                                                                                   | `true`                                                                       |
-| `--save-frames`      |       | Save individual frames for video input (instead of video file)                                                                                                                                                    | `false`                                                                      |
-| `--save-json`        |       | Save semantic segmentation class-map PNGs for external evaluation                                                                                                                                                 | `false`                                                                      |
-| `--show`             |       | Display results in a window                                                                                                                                                                                       | `false`                                                                      |
-| `--device`           |       | Device string, e.g. cpu, cuda:0, coreml, directml:0, intel:cpu, intel:gpu, intel:npu, tensorrt:0, rocm:0, migraphx:0, xnnpack; additional providers selectable when their feature is enabled (see Features table) | auto (best available provider; `cpu` when no accelerator feature is enabled) |
-| `--verbose [<BOOL>]` |       | Show verbose output                                                                                                                                                                                               | `true`                                                                       |
-| `--classes`          |       | Filter by class IDs, e.g. `0` or `"0,1,2"` or `"[0, 1, 2]"`                                                                                                                                                       | all classes                                                                  |
+| Option               | Short | Description                                                                                                                                                                                                                  | Default                                                                      |
+| -------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `--model`            | `-m`  | Path to ONNX model file; auto-downloaded if a known YOLOv8/YOLO11/YOLO26 name                                                                                                                                                | `yolo26n.onnx`                                                               |
+| `--task`             |       | Task type (`detect`, `segment`, `semantic`\*, `depth`\*, `classify`, `pose`, `obb`); selects nano model when `--model` is omitted                                                                                            | `detect`                                                                     |
+| `--source`           | `-s`  | Input source (image, directory, glob, video, webcam index, or URL)                                                                                                                                                           | Task-dependent Ultralytics URL assets                                        |
+| `--conf`             |       | Confidence threshold                                                                                                                                                                                                         | `0.25`                                                                       |
+| `--iou`              |       | IoU threshold for NMS                                                                                                                                                                                                        | `0.7`                                                                        |
+| `--max-det`          |       | Maximum number of detections                                                                                                                                                                                                 | `300`                                                                        |
+| `--imgsz`            |       | Inference image size                                                                                                                                                                                                         | model metadata                                                               |
+| `--rect [<BOOL>]`    |       | Enable rectangular inference (minimal padding)                                                                                                                                                                               | `true`                                                                       |
+| `--batch`            |       | Batch size for inference                                                                                                                                                                                                     | `1`                                                                          |
+| `--quantize`         |       | Inference precision: `8`, `16`, `32`, `int8`, `fp16`, `fp32`, `w8a8`, `w16a16`, `w32a32`, `w8a16`, or `w8a32`                                                                                                                | Model precision                                                              |
+| `--save [<BOOL>]`    |       | Save annotated results to runs/\<task\>/predict                                                                                                                                                                              | `true`                                                                       |
+| `--save-frames`      |       | Save individual frames for video input (instead of video file)                                                                                                                                                               | `false`                                                                      |
+| `--save-json`        |       | Save semantic segmentation class-map PNGs for external evaluation                                                                                                                                                            | `false`                                                                      |
+| `--show`             |       | Display results in a window                                                                                                                                                                                                  | `false`                                                                      |
+| `--device`           |       | Device string, e.g. cpu, cuda:0, coreml, directml:0, intel:cpu, intel:gpu, intel:npu, tensorrt:0, rocm:0, migraphx:0, xnnpack; each needs its feature, and a requested device that is not built or fails to load is an error | auto (best available provider; `cpu` when no accelerator feature is enabled) |
+| `--verbose [<BOOL>]` |       | Show verbose output                                                                                                                                                                                                          | `true`                                                                       |
+| `--classes`          |       | Filter by class IDs, e.g. `0` or `"0,1,2"` or `"[0, 1, 2]"`                                                                                                                                                                  | all classes                                                                  |
 
 `[<BOOL>]` marks a flag whose value is optional: passing it bare (`--rect`) sets it to `true`, and an explicit `--rect false` or `--rect=false` turns it off.
 
@@ -360,7 +360,9 @@ YOLOv8, YOLO11, and YOLO26 ONNX models in sizes **n / s / m / l / x** are suppor
 | Webcam      | `0`,`1`                         | Webcam index (0 = default webcam) |
 | URL         | `https://example.com/image.jpg` | Remote image URL                  |
 
-Supported image formats: `.avif`, `.bmp`, `.dng`, `.gif`, `.heic`, `.heif`, `.jp2`, `.jpeg`, `.jpg`, `.mpo`, `.png`, `.tif`, `.tiff` and `.webp`.
+Supported image formats: `.bmp`, `.dng`, `.gif`, `.jp2`, `.jpeg`, `.jpg`, `.mpo`, `.png`, `.tif`, `.tiff` and `.webp`.
+
+Supported video formats (`video` feature): `.asf`, `.avi`, `.flv`, `.m4v`, `.mkv`, `.mov`, `.mp4`, `.mpeg`, `.mpg`, `.ts`, `.wmv` and `.webm`.
 
 ### As a Rust Library
 
@@ -369,7 +371,7 @@ Add to your `Cargo.toml` (choose one):
 ```toml
 # Stable release from crates.io
 [dependencies]
-ultralytics-inference = "0.0.53"
+ultralytics-inference = "0.0.54"
 ```
 
 ```toml
@@ -499,6 +501,24 @@ depth spends the color range on nearby detail rather than the distant background
 objects read warm and a few stray pixels cannot wash out the rest. `metric` colors depth
 directly, linearly between its min and max.
 
+**Pose Drawing:**
+
+`annotate_image_with_options` takes the keypoint options of Ultralytics `Results.plot`. A 17-keypoint (COCO-Pose)
+model draws the human skeleton, any other layout draws one palette color per keypoint and no lines, and `skeleton`
+connects the keypoints of a custom model:
+
+```rust
+use ultralytics_inference::annotate::{AnnotateOptions, annotate_image_with_options};
+
+let options = AnnotateOptions {
+    kpt_radius: 5,
+    kpt_conf: 0.25,
+    skeleton: Some(vec![[0, 1], [1, 2]]),
+    ..Default::default()
+};
+let annotated = annotate_image_with_options(&image, &results[0], &options);
+```
+
 For runnable programs you can copy and adapt, see the [examples](examples/README.md) directory.
 
 ## 🗂️ Project Structure
@@ -509,6 +529,7 @@ inference/
 │   ├── lib.rs              # Library entry point and public exports
 │   ├── main.rs             # CLI application
 │   ├── model.rs            # YOLOModel - ONNX session and inference
+│   ├── openvino.rs         # Native OpenVINO IR runtime (openvino-native feature)
 │   ├── results.rs          # Results, Boxes, Masks, Keypoints, Probs, Obb, SemanticMask, DepthMap
 │   ├── preprocessing.rs    # Image preprocessing (letterbox, stretch for RT-DETR and depth, normalize, SIMD)
 │   ├── postprocessing.rs   # Post-processing for all tasks (NMS/decode for detection, argmax for semantic, resize for depth)
@@ -548,7 +569,8 @@ inference/
 ├── web/                    # @ultralytics/yolo npm package (TypeScript wrapper)
 ├── docs/                   # Additional guides
 │   ├── CUDA.md             # NVIDIA CUDA and TensorRT setup
-│   └── DGX.md              # DGX Spark (aarch64) setup and benchmarks
+│   ├── DGX.md              # DGX Spark (aarch64) setup and benchmarks
+│   └── OPENVINO.md         # Native OpenVINO IR models
 ├── Cargo.toml              # Rust dependencies and features
 ├── LICENSE                 # AGPL-3.0 License
 ├── README.md               # English README
@@ -589,11 +611,11 @@ Each accelerator feature links a prebuilt ONNX Runtime containing that provider.
 
 ```toml
 [dependencies]
-ultralytics-inference = { version = "0.0.53", features = ["coreml", "xnnpack"] }
+ultralytics-inference = { version = "0.0.54", features = ["coreml", "xnnpack"] }
 ort = { version = "=2.0.0-rc.15", features = ["lax-feature-matching"] }
 ```
 
-Providers missing from the chosen build are then absent at runtime and inference falls back to CPU. On `aarch64-unknown-linux-gnu` a CUDA, TensorRT and NVRTX build is published for Jetson, Grace Hopper and DGX Spark; other GPU features there still hit this, see [`docs/DGX.md`](docs/DGX.md).
+Providers missing from the chosen build are then absent at runtime: the default device falls back to CPU, and a `--device` that needs one stops with an error. On `aarch64-unknown-linux-gnu` a CUDA, TensorRT and NVRTX build is published for Jetson, Grace Hopper and DGX Spark; other GPU features there still hit this, see [`docs/DGX.md`](docs/DGX.md).
 
 > The CUDA and TensorRT binaries are built against CUDA 13, and no CUDA 12 build is published. To run them on CUDA 12, compile ONNX Runtime yourself and link it with `ORT_LIB_PATH`.
 
@@ -602,7 +624,7 @@ Providers missing from the chosen build are then absent at runtime and inference
 **OpenVINO IR models:** with the `openvino-native` feature (it can be combined with `openvino`), `--model` also takes a native OpenVINO export, the `.xml` file or the folder from `yolo export format=openvino`, and runs it through the OpenVINO runtime instead of ONNX Runtime. Every task (detect, segment, semantic, depth, classify, pose, obb) runs on `intel:cpu`, `intel:gpu` and `intel:npu`, and from Rust with `YOLOModel::load("yolo26n_openvino_model")`. Building needs no OpenVINO install, the runtime is loaded when the first model opens. Setup and details are in [`docs/OPENVINO.md`](docs/OPENVINO.md).
 
 ```bash
-yolo export model=yolo26n.pt format=openvino # FP32, add half=True, int8=True, dynamic=True or batch=4
+yolo export model=yolo26n.pt format=openvino # FP32, add quantize=16, quantize=8, dynamic=True or batch=4
 ultralytics-inference predict --model yolo26n_openvino_model --source bus.jpg --device intel:gpu
 ```
 

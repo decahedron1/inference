@@ -19,9 +19,11 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::sync::Arc;
 
-use js_sys::Float32Array;
+use image::ImageReader;
+use js_sys::{Float32Array, Uint32Array};
 use ndarray::Array3;
 use ort::AsPointer;
 use ort::environment::Environment;
@@ -32,13 +34,15 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use ultralytics_inference::metadata::ModelMetadata;
-use ultralytics_inference::postprocessing::{postprocess_semantic_mask, postprocess_with_head};
+use ultralytics_inference::postprocessing::{
+    filter_semantic_classes, postprocess_semantic_mask, postprocess_with_head,
+};
 use ultralytics_inference::preprocessing::{
-    PreprocessResult, calculate_rect_size, preprocess_image_center_crop, preprocess_image_stretch,
-    preprocess_image_with_precision,
+    PreprocessResult, calculate_rect_size, preprocess_for_task,
 };
 use ultralytics_inference::results::Speed;
-use ultralytics_inference::visualizer::color::{Color, Colormap, DepthViz};
+use ultralytics_inference::utils::decode_image;
+use ultralytics_inference::visualizer::color::{COLORS, Color, Colormap, DepthViz};
 use ultralytics_inference::visualizer::skeleton::{
     KPT_COLOR_INDICES, LIMB_COLOR_INDICES, SKELETON,
 };
@@ -241,22 +245,15 @@ fn preprocess_image(
     // Convert to RGB once and reuse it for both outputs: an RGBA canvas frame would
     // otherwise be converted twice, and a decoded RGB image now moves without a copy.
     let rgb = image::DynamicImage::ImageRgb8(dynimg.into_rgb8());
-    let pre = if task == Task::Classify {
-        preprocess_image_center_crop(&rgb, imgsz, None)
-    } else if scale_fill {
-        // RT-DETR and depth are trained on a stretched square input, so they never letterbox.
-        preprocess_image_stretch(&rgb, imgsz, None)
+    // Rectangular inference pads only up to the stride instead of to a square, so a 16:9
+    // frame skips ~40% of its pixels. Only a letterboxing model that left its height and
+    // width dynamic can accept the resulting shape; see `YoloModel::rect`.
+    let target = if rect && task != Task::Classify && !scale_fill {
+        calculate_rect_size(rgb.width(), rgb.height(), imgsz, stride)
     } else {
-        // Rectangular inference pads only up to the stride instead of to a square, so a
-        // 16:9 frame skips ~40% of its pixels. Only a model that left its height and width
-        // dynamic can accept the resulting shape; see `YoloModel::rect`.
-        let target = if rect {
-            calculate_rect_size(rgb.width(), rgb.height(), imgsz, stride)
-        } else {
-            imgsz
-        };
-        preprocess_image_with_precision(&rgb, target, stride, None)
+        imgsz
     };
+    let pre = preprocess_for_task(&rgb, target, stride, task, scale_fill, None);
     let rgb = rgb.into_rgb8();
     let (width, height) = rgb.dimensions();
     let orig_img = Array3::from_shape_vec((height as usize, width as usize, 3), rgb.into_raw())
@@ -332,6 +329,7 @@ impl YoloModel {
         let want = Device::parse(&device);
         ensure_backend(ort_base_url, want.accelerated()).await?;
         let metadata = build_metadata(&bytes)?;
+        let bytes = onnx_meta::with_f32_io(&bytes).unwrap_or(bytes);
         if want != Device::Cpu
             && let Ok(session) = Self::commit(&bytes, want).await
         {
@@ -384,7 +382,8 @@ impl YoloModel {
         colormap: String,
         depth_viz: String,
     ) -> Result<JsValue, JsError> {
-        let dynimg = image::load_from_memory(&image).map_err(err_ctx("failed to decode image"))?;
+        let dynimg = decode_image(ImageReader::new(Cursor::new(image)))
+            .map_err(err_ctx("failed to decode image"))?;
         self.run(
             dynimg,
             conf,
@@ -591,7 +590,7 @@ impl YoloModel {
             } else {
                 &shape
             };
-            postprocess_semantic_mask(
+            let results = postprocess_semantic_mask(
                 data,
                 img_shape,
                 names,
@@ -599,7 +598,8 @@ impl YoloModel {
                 String::new(),
                 speed(),
                 inference_shape,
-            )
+            );
+            filter_semantic_classes(results, &config)
         } else {
             // Borrow each output's data directly (no copy) and feed it to the shared
             // f32 postprocessor while `outputs` is still alive.
@@ -792,20 +792,20 @@ impl YoloPipeline {
     /// Postprocess an external engine's raw outputs into the standard `Results`.
     ///
     /// `outputs` are the model's output tensors (one for most tasks; two for
-    /// segmentation: detection head + mask prototypes). `shapes` encodes each
-    /// output's dims flat as `[rank0, dims0..., rank1, dims1...]`. `inference_ms`
+    /// segmentation: detection head + mask prototypes), with one entry of dims per
+    /// output in `shapes`. `inference_ms`
     /// is the time the JS engine reported, used only for the `speed` breakdown.
     /// Consumes the frame stashed by the preceding
     /// [`preprocess_rgba`](Self::preprocess_rgba).
     ///
     /// # Errors
-    /// Returns a JS error if called before `preprocess_rgba`, if `shapes` is
-    /// malformed, or on serialization failure.
+    /// Returns a JS error if called before `preprocess_rgba`, if `shapes` does not
+    /// have one entry per output, or on serialization failure.
     #[allow(clippy::too_many_arguments)]
     pub fn postprocess(
         &mut self,
         outputs: Vec<Float32Array>,
-        shapes: Vec<u32>,
+        shapes: Vec<Uint32Array>,
         inference_ms: f64,
         conf: f32,
         iou: f32,
@@ -825,7 +825,17 @@ impl YoloPipeline {
                 "external engine returned no output tensors (the model may have failed to run)",
             ));
         }
-        let mut shape_vecs = decode_shapes(&shapes, bufs.len())?;
+        if shapes.len() != bufs.len() {
+            return Err(JsError::new(&format!(
+                "expected {} output shapes, got {}",
+                bufs.len(),
+                shapes.len()
+            )));
+        }
+        let mut shape_vecs: Vec<Vec<usize>> = shapes
+            .iter()
+            .map(|s| s.to_vec().into_iter().map(|d| d as usize).collect())
+            .collect();
 
         // Order so the detection head (rank 3, e.g. [1, C, 8400]) is first and the
         // segmentation prototype tensor (rank 4) second, matching the shared
@@ -888,29 +898,6 @@ impl YoloPipeline {
         );
         to_js(&payload, "results")
     }
-}
-
-/// Decode the flat shape encoding `[rank0, dims0..., rank1, dims1...]` into one
-/// `Vec<usize>` per output tensor.
-fn decode_shapes(flat: &[u32], count: usize) -> Result<Vec<Vec<usize>>, JsError> {
-    let mut shapes = Vec::with_capacity(count);
-    let mut i = 0;
-    while i < flat.len() {
-        let rank = flat[i] as usize;
-        i += 1;
-        if i + rank > flat.len() {
-            return Err(JsError::new("malformed output shapes"));
-        }
-        shapes.push(flat[i..i + rank].iter().map(|&d| d as usize).collect());
-        i += rank;
-    }
-    if shapes.len() != count {
-        return Err(JsError::new(&format!(
-            "expected {count} output shapes, decoded {}",
-            shapes.len()
-        )));
-    }
-    Ok(shapes)
 }
 
 /// Scale a normalized detection head's coordinates to model-input pixels in place.
@@ -1029,6 +1016,9 @@ struct PoseScheme {
     keypoint_colors: Vec<String>,
     /// Hex color per limb (length 19, aligned with `skeleton`).
     limb_colors: Vec<String>,
+    /// The 20-color Ultralytics palette with red and blue swapped, the colors Ultralytics
+    /// pictures show for keypoint layouts other than COCO-Pose (OpenCV draws them as BGR).
+    palette: Vec<String>,
 }
 
 /// Return the Ultralytics pose skeleton + keypoint/limb colors (constant). The
@@ -1047,6 +1037,12 @@ pub fn pose_palette() -> Result<JsValue, JsError> {
         limb_colors: LIMB_COLOR_INDICES
             .iter()
             .map(|&i| Color::from_pose_index(i).to_hex())
+            .collect(),
+        palette: (0..COLORS.len())
+            .map(|i| {
+                let Color(r, g, b) = Color::from_index(i);
+                Color(b, g, r).to_hex()
+            })
             .collect(),
     };
     to_js(&scheme, "pose palette")

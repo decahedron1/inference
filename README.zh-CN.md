@@ -243,7 +243,7 @@ ultralytics-inference predict
 ```text
 WARNING ⚠️ 'model' argument is missing. Using default '--model=yolo26n.onnx'.
 WARNING ⚠️ 'source' argument is missing. Using default images: https://ultralytics.com/images/bus.jpg, https://ultralytics.com/images/zidane.jpg
-Ultralytics Inference 0.0.53 🚀 Rust ONNX FP32 CPU
+Ultralytics Inference 0.0.54 🚀 Rust ONNX FP32 CPU
 Using ONNX Runtime CPUExecutionProvider
 YOLO26n summary: 80 classes, imgsz=(640, 640)
 
@@ -263,7 +263,7 @@ ultralytics-inference predict --task segment
 ```text
 WARNING ⚠️ 'model' argument is missing. Using default '--model=yolo26n-seg.onnx'.
 WARNING ⚠️ 'source' argument is missing. Using default images: https://ultralytics.com/images/bus.jpg, https://ultralytics.com/images/zidane.jpg
-Ultralytics Inference 0.0.53 🚀 Rust ONNX FP32 CPU
+Ultralytics Inference 0.0.54 🚀 Rust ONNX FP32 CPU
 Using ONNX Runtime CPUExecutionProvider
 YOLO26n-seg summary: 80 classes, imgsz=(640, 640)
 
@@ -293,31 +293,31 @@ ultralytics-inference predict --model yolo26n.onnx --source image.jpg
 
 **CLI 选项：**
 
-| 选项                 | 简写 | 说明                                                                                                                                                                          | 默认值                                                          |
-| -------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `--model`            | `-m` | ONNX 模型文件路径；若为已知 YOLOv8/YOLO11/YOLO26 名称则自动下载                                                                                                               | `yolo26n.onnx`                                                  |
-| `--task`             |      | 任务类型（`detect`、`segment`、`semantic`\*、`depth`\*、`classify`、`pose`、`obb`）；省略 `--model` 时选择 nano 模型                                                          | `detect`                                                        |
-| `--source`           | `-s` | 输入源（图片、目录、glob、视频、摄像头索引或 URL）                                                                                                                            | 与任务相关的 Ultralytics URL 资源                               |
-| `--conf`             |      | 置信度阈值                                                                                                                                                                    | `0.25`                                                          |
-| `--iou`              |      | NMS IoU 阈值                                                                                                                                                                  | `0.7`                                                           |
-| `--max-det`          |      | 最大检测数量                                                                                                                                                                  | `300`                                                           |
-| `--imgsz`            |      | 推理图片尺寸                                                                                                                                                                  | 模型元数据                                                      |
-| `--rect [<BOOL>]`    |      | 启用矩形推理（最小填充）                                                                                                                                                      | `true`                                                          |
-| `--batch`            |      | 推理 batch size                                                                                                                                                               | `1`                                                             |
-| `--quantize`         |      | 推理精度：`8`、`16`、`32`、`int8`、`fp16`、`fp32`、`w8a8`、`w16a16`、`w32a32`、`w8a16` 或 `w8a32`                                                                             | 模型精度                                                        |
-| `--save [<BOOL>]`    |      | 将标注结果保存到 runs/\<task\>/predict                                                                                                                                        | `true`                                                          |
-| `--save-frames`      |      | 为视频输入保存单帧（而不是视频文件）                                                                                                                                          | `false`                                                         |
-| `--save-json`        |      | 保存语义分割类别图 PNG，便于外部评估                                                                                                                                          | `false`                                                         |
-| `--show`             |      | 在窗口中显示结果                                                                                                                                                              | `false`                                                         |
-| `--device`           |      | 设备字符串，例如 cpu、cuda:0、coreml、directml:0、intel:cpu、intel:gpu、intel:npu、tensorrt:0、rocm:0、migraphx:0、xnnpack；启用 feature 后可选择更多提供方（见 Features 表） | 自动（选择可用的最佳提供方；未启用任何加速 feature 时为 `cpu`） |
-| `--verbose [<BOOL>]` |      | 显示详细输出                                                                                                                                                                  | `true`                                                          |
-| `--classes`          |      | 按类别 ID 过滤，例如 `0`、`"0,1,2"` 或 `"[0, 1, 2]"`                                                                                                                          | 所有类别                                                        |
+| 选项                 | 简写 | 说明                                                                                                                                                                                         | 默认值                                                          |
+| -------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `--model`            | `-m` | ONNX 模型文件路径；若为已知 YOLOv8/YOLO11/YOLO26 名称则自动下载                                                                                                                              | `yolo26n.onnx`                                                  |
+| `--task`             |      | 任务类型（`detect`、`segment`、`semantic`\*、`depth`\*、`classify`、`pose`、`obb`）；省略 `--model` 时选择 nano 模型                                                                         | `detect`                                                        |
+| `--source`           | `-s` | 输入源（图片、目录、glob、视频、摄像头索引或 URL）                                                                                                                                           | 与任务相关的 Ultralytics URL 资源                               |
+| `--conf`             |      | 置信度阈值                                                                                                                                                                                   | `0.25`                                                          |
+| `--iou`              |      | NMS IoU 阈值                                                                                                                                                                                 | `0.7`                                                           |
+| `--max-det`          |      | 最大检测数量                                                                                                                                                                                 | `300`                                                           |
+| `--imgsz`            |      | 推理图片尺寸                                                                                                                                                                                 | 模型元数据                                                      |
+| `--rect [<BOOL>]`    |      | 启用矩形推理（最小填充）                                                                                                                                                                     | `true`                                                          |
+| `--batch`            |      | 推理 batch size                                                                                                                                                                              | `1`                                                             |
+| `--quantize`         |      | 推理精度：`8`、`16`、`32`、`int8`、`fp16`、`fp32`、`w8a8`、`w16a16`、`w32a32`、`w8a16` 或 `w8a32`                                                                                            | 模型精度                                                        |
+| `--save [<BOOL>]`    |      | 将标注结果保存到 runs/\<task\>/predict                                                                                                                                                       | `true`                                                          |
+| `--save-frames`      |      | 为视频输入保存单帧（而不是视频文件）                                                                                                                                                         | `false`                                                         |
+| `--save-json`        |      | 保存语义分割类别图 PNG，便于外部评估                                                                                                                                                         | `false`                                                         |
+| `--show`             |      | 在窗口中显示结果                                                                                                                                                                             | `false`                                                         |
+| `--device`           |      | 设备字符串，例如 cpu、cuda:0、coreml、directml:0、intel:cpu、intel:gpu、intel:npu、tensorrt:0、rocm:0、migraphx:0、xnnpack；每个设备需要启用对应 feature，请求的设备未编译或加载失败时会报错 | 自动（选择可用的最佳提供方；未启用任何加速 feature 时为 `cpu`） |
+| `--verbose [<BOOL>]` |      | 显示详细输出                                                                                                                                                                                 | `true`                                                          |
+| `--classes`          |      | 按类别 ID 过滤，例如 `0`、`"0,1,2"` 或 `"[0, 1, 2]"`                                                                                                                                         | 所有类别                                                        |
 
 `[<BOOL>]` 表示该标志的值是可选的：单独传入（`--rect`）即为 `true`，也可显式使用 `--rect false` 或 `--rect=false` 关闭。
 
 旧版 `--half` 标志仍可向后兼容，会映射为 `--quantize 16`，并发出与 Ultralytics Python 相同的弃用警告。显式的 `--quantize` 值优先。
 
-在 CPU 上，ONNX Runtime 会在创建推理会话时将 FP16 ONNX 图加宽为 FP32 权重，因此 FP16 导出模型也能以 FP32 的速度运行。紧凑的 FP16 源文件保持不变。
+在 CPU 上，ONNX Runtime 会在创建推理会话时将 FP16 ONNX 图加宽为 FP32 权重，因此 FP16 导出模型在 CPU 上的速度与 FP32 相同。紧凑的 FP16 源文件保持不变。
 
 **任务和模型解析：**
 
@@ -359,7 +359,9 @@ YOLOv8、YOLO11 和 YOLO26 ONNX 模型支持 **n / s / m / l / x** 尺寸，并�
 | 摄像头     | `0`,`1`                         | 摄像头索引（0 为默认） |
 | URL        | `https://example.com/image.jpg` | 远程图片 URL           |
 
-支持的图片格式：`.avif`、`.bmp`、`.dng`、`.gif`、`.heic`、`.heif`、`.jp2`、`.jpeg`、`.jpg`、`.mpo`、`.png`、`.tif`、`.tiff` 和 `.webp`。
+支持的图片格式：`.bmp`、`.dng`、`.gif`、`.jp2`、`.jpeg`、`.jpg`、`.mpo`、`.png`、`.tif`、`.tiff` 和 `.webp`。
+
+支持的视频格式（`video` 特性）：`.asf`、`.avi`、`.flv`、`.m4v`、`.mkv`、`.mov`、`.mp4`、`.mpeg`、`.mpg`、`.ts`、`.wmv` 和 `.webm`。
 
 ### 作为 Rust 库
 
@@ -368,7 +370,7 @@ YOLOv8、YOLO11 和 YOLO26 ONNX 模型支持 **n / s / m / l / x** 尺寸，并�
 ```toml
 # crates.io 稳定版本
 [dependencies]
-ultralytics-inference = "0.0.53"
+ultralytics-inference = "0.0.54"
 ```
 
 ```toml
@@ -495,6 +497,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 细节而非远处背景，因此近处呈暖色，且少量离群像素不会冲淡其余部分；`metric` 则直接对深度在其
 最小值与最大值之间做线性着色。
 
+**姿态绘制：**
+
+`annotate_image_with_options` 接受与 Ultralytics `Results.plot` 相同的关键点选项。17 个关键点（COCO-Pose）的模型
+绘制人体骨架，其他关键点布局为每个关键点使用一种调色板颜色且不连线，`skeleton` 可为自定义模型连接关键点：
+
+```rust
+use ultralytics_inference::annotate::{AnnotateOptions, annotate_image_with_options};
+
+let options = AnnotateOptions {
+    kpt_radius: 5,
+    kpt_conf: 0.25,
+    skeleton: Some(vec![[0, 1], [1, 2]]),
+    ..Default::default()
+};
+let annotated = annotate_image_with_options(&image, &results[0], &options);
+```
+
 可复制并修改的可运行程序，请参见 [examples](examples/README.md) 目录。
 
 ## 🗂️ 项目结构
@@ -505,6 +524,7 @@ inference/
 │   ├── lib.rs              # 库入口和公开导出
 │   ├── main.rs             # CLI 应用
 │   ├── model.rs            # YOLOModel - ONNX session 和推理
+│   ├── openvino.rs         # 原生 OpenVINO IR 运行时（openvino-native feature）
 │   ├── results.rs          # Results, Boxes, Masks, Keypoints, Probs, Obb, SemanticMask, DepthMap
 │   ├── preprocessing.rs    # 图片预处理（letterbox、RT-DETR 和深度模型的拉伸缩放、normalize、SIMD）
 │   ├── postprocessing.rs   # 所有任务的后处理（检测 NMS/decode、语义分割 argmax、深度 resize）
@@ -544,7 +564,8 @@ inference/
 ├── web/                    # @ultralytics/yolo npm 包（TypeScript 封装）
 ├── docs/                   # 补充指南
 │   ├── CUDA.md             # NVIDIA CUDA 与 TensorRT 配置
-│   └── DGX.md              # DGX Spark (aarch64) 配置与基准测试
+│   ├── DGX.md              # DGX Spark (aarch64) 配置与基准测试
+│   └── OPENVINO.md         # 原生 OpenVINO IR 模型
 ├── Cargo.toml              # Rust 依赖和 features
 ├── LICENSE                 # AGPL-3.0 License
 ├── README.md               # 英文 README
@@ -585,11 +606,11 @@ cargo build --release --features "cuda,tensorrt"
 
 ```toml
 [dependencies]
-ultralytics-inference = { version = "0.0.53", features = ["coreml", "xnnpack"] }
+ultralytics-inference = { version = "0.0.54", features = ["coreml", "xnnpack"] }
 ort = { version = "=2.0.0-rc.15", features = ["lax-feature-matching"] }
 ```
 
-所选版本中缺失的 provider 在运行时将不可用，推理会回退到 CPU。在 `aarch64-unknown-linux-gnu` 上发布了面向 Jetson、Grace Hopper 和 DGX Spark 的 CUDA、TensorRT 和 NVRTX 版本；该平台上的其他 GPU feature 仍会遇到这种情况，请见 [`docs/DGX.md`](docs/DGX.md)。
+所选版本中缺失的 provider 在运行时将不可用：默认设备会回退到 CPU，而需要该 provider 的 `--device` 会报错退出。在 `aarch64-unknown-linux-gnu` 上发布了面向 Jetson、Grace Hopper 和 DGX Spark 的 CUDA、TensorRT 和 NVRTX 版本；该平台上的其他 GPU feature 仍会遇到这种情况，请见 [`docs/DGX.md`](docs/DGX.md)。
 
 > CUDA 与 TensorRT 二进制基于 CUDA 13 构建，且未发布 CUDA 12 版本。若需在 CUDA 12 上运行，请自行编译 ONNX Runtime，并通过 `ORT_LIB_PATH` 链接该构建。
 
@@ -598,7 +619,7 @@ ort = { version = "=2.0.0-rc.15", features = ["lax-feature-matching"] }
 **OpenVINO IR 模型：** 启用 `openvino-native` feature（可与 `openvino` 同时启用）后，`--model` 也可以直接使用 `yolo export format=openvino` 导出的 `.xml` 文件或导出文件夹，并通过 OpenVINO 运行时推理，而不经过 ONNX Runtime。所有任务（detect、segment、semantic、depth、classify、pose、obb）都可在 `intel:cpu`、`intel:gpu` 和 `intel:npu` 上运行，在 Rust 中用 `YOLOModel::load("yolo26n_openvino_model")` 加载。构建时不需要安装 OpenVINO，运行时会在首次打开模型时加载。设置和细节见 [`docs/OPENVINO.md`](docs/OPENVINO.md)。
 
 ```bash
-yolo export model=yolo26n.pt format=openvino # FP32，可加 half=True、int8=True、dynamic=True 或 batch=4
+yolo export model=yolo26n.pt format=openvino # FP32，可加 quantize=16、quantize=8、dynamic=True 或 batch=4
 ultralytics-inference predict --model yolo26n_openvino_model --source bus.jpg --device intel:gpu
 ```
 
